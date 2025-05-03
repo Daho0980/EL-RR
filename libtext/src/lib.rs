@@ -1,5 +1,5 @@
-use pyo3::prelude::*              ;
-use unicode_width::UnicodeWidthStr;
+use pyo3::prelude::*;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 
 #[pyfunction]
@@ -7,8 +7,82 @@ fn actual_len(a:&str) -> PyResult<usize> {
     Ok(UnicodeWidthStr::width(a))
 }
 
+#[pyfunction]
+fn split_by_width(input: &str, width: usize) -> Vec<String> {
+    let mut result = Vec::new();
+
+    for line in input.split('\n') {
+        let mut visible = 0;
+
+        let mut current_line = String::with_capacity(width+16);
+        let mut active_codes = String::with_capacity(16);
+
+        let mut chars = line.chars().peekable();
+
+        while let Some(&ch) = chars.peek() {
+            if ch == '\u{1b}' {
+                let mut seq = String::new();
+                let mut iter = chars.clone();
+
+                seq.push(iter.next().unwrap()); // '\x1b'
+
+                if iter.peek() == Some(&'[') {
+                    seq.push(iter.next().unwrap()); // '['
+
+                    while let Some(c) = iter.next() {
+                        seq.push(c);
+                        if c.is_ascii_alphabetic() { break; }
+                    }
+
+                    if seq.ends_with('m') {
+                        if  seq == "\x1b[0m" { active_codes.clear(); }
+                        else                 { active_codes = seq.clone(); }
+
+                        current_line.push_str(&seq);
+
+                        for _ in 0..seq.chars().count() { chars.next(); }
+
+                        continue;
+                    }
+                }
+            }
+
+            let ch = chars.next().unwrap();
+            let w = UnicodeWidthChar::width(ch).unwrap_or(0);
+
+            if (visible+w) > width {
+                if !active_codes.is_empty() && !current_line.ends_with("\x1b[0m") {
+                    current_line.push_str("\x1b[0m");
+                }
+
+                result.push(std::mem::take(&mut current_line));
+
+                visible = 0;
+
+                if !active_codes.is_empty() { current_line.push_str(&active_codes); }
+            }
+
+            current_line.push(ch);
+            visible += w;
+        }
+
+        if !current_line.is_empty() {
+            if !active_codes.is_empty() && !current_line.ends_with("\x1b[0m") {
+                current_line.push_str("\x1b[0m");
+            }
+            result.push(current_line);
+        }
+
+        if line.is_empty() { result.push(String::new()); }
+    }
+
+    result
+}
+
+
 #[pymodule]
 fn libtext(m:&Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(actual_len, m)?)?;
+    m.add_function(wrap_pyfunction!(split_by_width, m)?)?;
     Ok(())
 }
