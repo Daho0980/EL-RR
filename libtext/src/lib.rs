@@ -7,11 +7,17 @@ fn actual_len(a:&str) -> PyResult<usize> {
     Ok(UnicodeWidthStr::width(a))
 }
 
+fn ensure_reset_code(active_codes: &String, current_line: &mut String) {
+    if !active_codes.is_empty() && !current_line.ends_with("\x1b[0m") {
+        current_line.push_str("\x1b[0m");
+    }
+}
+
 #[pyfunction]
-fn split_by_width(input: &str, width: usize) -> Vec<String> {
+fn cutter(input: &str, width: usize, maintain: bool) -> Vec<String> {
     let mut result = Vec::new();
 
-    for line in input.split('\n') {
+    'line_loop: for line in input.split('\n') {
         let mut visible = 0;
 
         let mut current_line = String::with_capacity(width+16);
@@ -51,11 +57,11 @@ fn split_by_width(input: &str, width: usize) -> Vec<String> {
             let w = UnicodeWidthChar::width(ch).unwrap_or(0);
 
             if (visible+w) > width {
-                if !active_codes.is_empty() && !current_line.ends_with("\x1b[0m") {
-                    current_line.push_str("\x1b[0m");
-                }
+                ensure_reset_code(&active_codes, &mut current_line);
 
                 result.push(std::mem::take(&mut current_line));
+                
+                if !maintain { continue 'line_loop }
 
                 visible = 0;
 
@@ -64,17 +70,15 @@ fn split_by_width(input: &str, width: usize) -> Vec<String> {
 
             current_line.push(ch);
             visible += w;
-        }
+        } // while end
 
         if !current_line.is_empty() {
-            if !active_codes.is_empty() && !current_line.ends_with("\x1b[0m") {
-                current_line.push_str("\x1b[0m");
-            }
+            ensure_reset_code(&active_codes, &mut current_line);
             result.push(current_line);
         }
 
         if line.is_empty() { result.push(String::new()); }
-    }
+    } // for end
 
     result
 }
@@ -83,6 +87,6 @@ fn split_by_width(input: &str, width: usize) -> Vec<String> {
 #[pymodule]
 fn libtext(m:&Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(actual_len, m)?)?;
-    m.add_function(wrap_pyfunction!(split_by_width, m)?)?;
+    m.add_function(wrap_pyfunction!(cutter, m)?)?;
     Ok(())
 }
