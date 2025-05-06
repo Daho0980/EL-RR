@@ -1,10 +1,21 @@
 use pyo3::prelude::*;
+use pyo3::wrap_pyfunction;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 
 #[pyfunction]
-fn actual_len(a:&str) -> PyResult<usize> {
-    Ok(UnicodeWidthStr::width(a))
+fn measure(text:&str) -> PyResult<usize> {
+    Ok(UnicodeWidthStr::width(text))
+}
+
+macro_rules! line_end {
+    ($result:expr, $max_len:expr, $ellipsis:expr, $label:lifetime) => {
+        if $ellipsis && (($result.len()+1)>=$max_len) {
+            $result.push(String::from("..."));
+
+            break $label
+        }
+    };
 }
 
 fn ensure_reset_code(active_codes: &String, current_line: &mut String) {
@@ -13,9 +24,18 @@ fn ensure_reset_code(active_codes: &String, current_line: &mut String) {
     }
 }
 
-#[pyfunction]
-fn cutter(input: &str, width: usize, maintain: bool) -> Vec<String> {
+#[pyfunction(
+    signature=(
+        input, width,
+
+        maintain=true,
+        ellipsis=false,
+        height  =0
+    )
+)]
+fn cut(input: &str, width: usize, maintain: bool, ellipsis: bool, height: usize) -> Vec<String> {
     let mut result = Vec::new();
+    let max_len = if height==0 { input.split('\n').count() } else { height };
 
     'line_loop: for line in input.split('\n') {
         let mut visible = 0;
@@ -58,6 +78,8 @@ fn cutter(input: &str, width: usize, maintain: bool) -> Vec<String> {
 
             if (visible+w) > width {
                 ensure_reset_code(&active_codes, &mut current_line);
+                
+                line_end!(result, max_len, ellipsis, 'line_loop);
 
                 result.push(std::mem::take(&mut current_line));
                 
@@ -72,13 +94,15 @@ fn cutter(input: &str, width: usize, maintain: bool) -> Vec<String> {
             visible += w;
         } // while end
 
+        line_end!(result, max_len, ellipsis, 'line_loop);
+
         if !current_line.is_empty() {
             ensure_reset_code(&active_codes, &mut current_line);
             result.push(current_line);
+        } else if line.is_empty() {
+            result.push(String::new());
         }
-
-        if line.is_empty() { result.push(String::new()); }
-    } // for end
+    } // for:line_loop end
 
     result
 }
@@ -86,7 +110,8 @@ fn cutter(input: &str, width: usize, maintain: bool) -> Vec<String> {
 
 #[pymodule]
 fn libtext(m:&Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(actual_len, m)?)?;
-    m.add_function(wrap_pyfunction!(cutter, m)?)?;
+    m.add_function(wrap_pyfunction!(measure, m)?)?;
+    m.add_function(wrap_pyfunction!(cut,     m)?)?;
+
     Ok(())
 }
